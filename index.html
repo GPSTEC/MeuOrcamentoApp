@@ -153,6 +153,10 @@
             transform: translateY(0);
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
+        /* Cor específica para o botão de Receita */
+        .action-button.income-button {
+            background-image: linear-gradient(to right, #10b981, #059669); /* green-500 to green-700 */
+        }
         .message-box {
             background-color: #fff;
             border: 1px solid #ddd;
@@ -248,6 +252,19 @@
             <button id="recordExpenseButton" class="action-button">Registrar Gasto</button>
         </div>
 
+        <h2 class="section-title">Registrar Receita</h2>
+        <div class="input-section">
+            <div class="input-group">
+                <label for="incomeItemName">Nome da Receita:</label>
+                <input type="text" id="incomeItemName" placeholder="Ex: Salário">
+            </div>
+            <div class="input-group">
+                <label for="incomeAmount">Valor da Receita (R$):</label>
+                <input type="number" id="incomeAmount" placeholder="Ex: 1500.00" step="0.01">
+            </div>
+            <button id="registerIncomeBtn" class="action-button income-button">Registrar Receita</button>
+        </div>
+
         <h2 class="section-title">Orçamento Compartilhado</h2>
         <div class="input-section">
             <div class="input-group">
@@ -267,9 +284,8 @@
     <script type="module">
         // Importa as funções necessárias do Firebase SDK
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // Importe getAnalytics se for usar Analytics
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
 
         // SUAS CONFIGURAÇÕES DO FIREBASE (substituído pelas suas credenciais reais)
@@ -287,7 +303,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
-        const analytics = getAnalytics(app); // Inicializa Analytics
+        const analytics = getAnalytics(app);
 
         let userId = null; // ID do usuário logado
         let initialBudget = {}; // Objeto para armazenar os orçamentos (pessoal ou compartilhado)
@@ -307,7 +323,12 @@
         const recordExpenseButton = document.getElementById('recordExpenseButton');
         const messageBox = document.getElementById('messageBox');
         const userIdDisplay = document.getElementById('userIdDisplay');
-        const currentBudgetDisplay = document.getElementById('currentBudgetDisplay'); // New element for current budget info
+        const currentBudgetDisplay = document.getElementById('currentBudgetDisplay');
+
+        // NOVOS ELEMENTOS PARA RECEITA
+        const incomeItemNameInput = document.getElementById('incomeItemName');
+        const incomeAmountInput = document.getElementById('incomeAmount');
+        const registerIncomeBtn = document.getElementById('registerIncomeBtn');
 
         const sharedBudgetIdInput = document.getElementById('sharedBudgetIdInput');
         const createSharedBudgetButton = document.getElementById('createSharedBudgetButton');
@@ -331,20 +352,39 @@
         // Função para renderizar os itens do orçamento na UI
         function renderBudgetItems() {
             budgetItemsContainer.innerHTML = '';
-            for (const item in initialBudget) {
-                const itemData = initialBudget[item];
+            // Ordena os itens do orçamento para exibir despesas primeiro e depois receitas (se tiver)
+            const sortedItems = Object.keys(initialBudget).sort((a, b) => {
+                const itemA = initialBudget[a];
+                const itemB = initialBudget[b];
+                // Prioriza "expenses" sobre "incomes" ou itens sem tipo
+                if (itemA.type === 'expense' && itemB.type !== 'expense') return -1;
+                if (itemA.type !== 'expense' && itemB.type === 'expense') return 1;
+                // Para itens do mesmo tipo ou sem tipo, ordena alfabeticamente
+                return a.localeCompare(b);
+            });
+
+            for (const itemKey of sortedItems) {
+                const itemData = initialBudget[itemKey];
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'budget-item';
 
-                let balanceClass = 'current-balance';
-                if (itemData.balance < itemData.initialValue * 0.2 && itemData.balance > 0) {
-                    balanceClass = 'low-balance';
-                } else if (itemData.balance <= 0) {
-                    balanceClass = 'low-balance';
+                let balanceClass = 'current-balance'; // Padrão para saldos normais
+                let itemTypeLabel = ''; // Rótulo para indicar se é Receita ou Despesa
+
+                if (itemData.type === 'expense') {
+                    if (itemData.balance < itemData.initialValue * 0.2 && itemData.balance > 0) {
+                        balanceClass = 'low-balance'; // Saldo baixo (despesa)
+                    } else if (itemData.balance <= 0) {
+                        balanceClass = 'low-balance'; // Saldo esgotado (despesa)
+                    }
+                    itemTypeLabel = 'Gasto';
+                } else if (itemData.type === 'income') {
+                    balanceClass = 'initial-value'; // Receita em verde
+                    itemTypeLabel = 'Receita';
                 }
 
                 itemDiv.innerHTML = `
-                    <strong>${item}</strong>
+                    <strong>${itemKey} (${itemTypeLabel})</strong>
                     <span>Inicial: <span class="initial-value">${formatCurrency(itemData.initialValue)}</span></span>
                     <span>Saldo: <span class="${balanceClass}">${formatCurrency(itemData.balance)}</span></span>
                 `;
@@ -370,32 +410,35 @@
             }
 
             let docRef;
+            // O template padrão agora incluirá um tipo para diferenciar
             const defaultBudgetTemplate = {
-                'MERCADO': { initialValue: 1000.00, balance: 1000.00 },
-                'RECARGA': { initialValue: 120.00, balance: 120.00 },
-                'LUZ': { initialValue: 320.00, balance: 320.00 },
-                'AGUA': { initialValue: 85.00, balance: 85.00 },
-                'REMEDIOS': { initialValue: 100.00, balance: 100.00 },
-                'PADARIA': { initialValue: 160.00, balance: 160.00 },
-                'FDS': { initialValue: 800.00, balance: 800.00 },
-                'CABELO IGOR': { initialValue: 60.00, balance: 60.00 },
-                'CAMILA': { initialValue: 200.00, balance: 200.00 },
-                'INTERNET': { initialValue: 40.00, balance: 40.00 },
-                'SEGURO CARRO': { initialValue: 115.00, balance: 115.00 },
-                'GABRIELA FRALDA': { initialValue: 200.00, balance: 200.00 },
-                'DIZMO': { initialValue: 385.00, balance: 385.00 },
-                'ACADEMIA': { initialValue: 190.00, balance: 190.00 },
-                'GASOLINA': { initialValue: 600.00, balance: 600.00 },
-                'ESCOLA GABI': { initialValue: 480.00, balance: 480.00 },
-                'NETFLIX': { initialValue: 35.00, balance: 35.00 },
-                'YOUTUBE': { initialValue: 25.00, balance: 25.00 },
-                'TAG CARRO': { initialValue: 4.00, balance: 4.00 },
-                'GOOGLE CAMILA': { initialValue: 8.00, balance: 8.00 },
-                'ALMOÇO CAMILA/LANCHE': { initialValue: 300.00, balance: 300.00 },
-                'TRANSPORTE GABI': { initialValue: 130.00, balance: 130.00 },
-                'DIZMO CAMILA': { initialValue: 210.00, balance: 210.00 },
-                'GABI MISCELANEAS': { initialValue: 100.00, balance: 100.00 },
-                'MEI CAMILA': { initialValue: 81.00, balance: 81.00 }
+                'MERCADO': { initialValue: 1000.00, balance: 1000.00, type: 'expense' },
+                'RECARGA': { initialValue: 120.00, balance: 120.00, type: 'expense' },
+                'LUZ': { initialValue: 320.00, balance: 320.00, type: 'expense' },
+                'AGUA': { initialValue: 85.00, balance: 85.00, type: 'expense' },
+                'REMEDIOS': { initialValue: 100.00, balance: 100.00, type: 'expense' },
+                'PADARIA': { initialValue: 160.00, balance: 160.00, type: 'expense' },
+                'FDS': { initialValue: 800.00, balance: 800.00, type: 'expense' },
+                'CABELO IGOR': { initialValue: 60.00, balance: 60.00, type: 'expense' },
+                'CAMILA': { initialValue: 200.00, balance: 200.00, type: 'expense' },
+                'INTERNET': { initialValue: 40.00, balance: 40.00, type: 'expense' },
+                'SEGURO CARRO': { initialValue: 115.00, balance: 115.00, type: 'expense' },
+                'GABRIELA FRALDA': { initialValue: 200.00, balance: 200.00, type: 'expense' },
+                'DIZMO': { initialValue: 385.00, balance: 385.00, type: 'expense' },
+                'ACADEMIA': { initialValue: 190.00, balance: 190.00, type: 'expense' },
+                'GASOLINA': { initialValue: 600.00, balance: 600.00, type: 'expense' },
+                'ESCOLA GABI': { initialValue: 480.00, balance: 480.00, type: 'expense' },
+                'NETFLIX': { initialValue: 35.00, balance: 35.00, type: 'expense' },
+                'YOUTUBE': { initialValue: 25.00, balance: 25.00, type: 'expense' },
+                'TAG CARRO': { initialValue: 4.00, balance: 4.00, type: 'expense' },
+                'GOOGLE CAMILA': { initialValue: 8.00, balance: 8.00, type: 'expense' },
+                'ALMOÇO CAMILA/LANCHE': { initialValue: 300.00, balance: 300.00, type: 'expense' },
+                'TRANSPORTE GABI': { initialValue: 130.00, balance: 130.00, type: 'expense' },
+                'DIZMO CAMILA': { initialValue: 210.00, balance: 210.00, type: 'expense' },
+                'GABI MISCELANEAS': { initialValue: 100.00, balance: 100.00, type: 'expense' },
+                'MEI CAMILA': { initialValue: 81.00, balance: 81.00, type: 'expense' },
+                // Adicione uma categoria para Salários/Receitas (ou deixe que sejam adicionadas dinamicamente)
+                'SALÁRIOS': { initialValue: 0.00, balance: 0.00, type: 'income' } // Valor inicial 0, será atualizado
             };
 
             const initialSalaries = {
@@ -425,20 +468,40 @@
                 budgetSnapshotUnsubscribe = onSnapshot(docRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        initialBudget = data.budgetItems || defaultBudgetTemplate;
+                        initialBudget = data.budgetItems || {}; // Inicia vazio ou com o que tem no Firestore
                         totalBalance = data.totalBalance !== undefined ? data.totalBalance : defaultTotalBalance;
 
                         // Garante que todos os itens padrão estejam presentes e, se faltarem, os adiciona
+                        // Também atualiza o saldo da categoria SALÁRIOS com o total dos salários iniciais
                         for (const item in defaultBudgetTemplate) {
                             if (!initialBudget[item]) {
                                 initialBudget[item] = defaultBudgetTemplate[item];
                             }
+                            // Se a categoria for SALÁRIOS e o saldo estiver em 0, ou se for menor que o default total, atualiza
+                            if (item === 'SALÁRIOS' && initialBudget[item].balance === 0) {
+                                initialBudget[item].balance = defaultTotalBalance;
+                                initialBudget[item].initialValue = defaultTotalBalance;
+                            }
                         }
+                        
+                        // Garante que qualquer item que venha do Firestore tenha um 'type' padrão 'expense' se não definido
+                        for (const itemKey in initialBudget) {
+                            if (initialBudget[itemKey].type === undefined) {
+                                initialBudget[itemKey].type = 'expense';
+                            }
+                        }
+
                         showMessage('Orçamento atualizado em tempo real.', 'info');
                     } else {
                         // Se o documento não existir, inicializa com valores padrão
                         initialBudget = defaultBudgetTemplate;
                         totalBalance = defaultTotalBalance;
+                        // Atualiza o saldo inicial da categoria SALÁRIOS no template antes de salvar
+                        if (initialBudget['SALÁRIOS']) {
+                            initialBudget['SALÁRIOS'].balance = defaultTotalBalance;
+                            initialBudget['SALÁRIOS'].initialValue = defaultTotalBalance;
+                        }
+
                         // Cria o documento no Firestore se não existir
                         setDoc(docRef, {
                             budgetItems: initialBudget,
@@ -499,7 +562,6 @@
                 userIdDisplay.textContent = `Seu ID de Usuário: ${userId}`;
                 showMessage(`Usuário logado. ID: ${userId}`, 'info');
 
-                // Garante que o primeiro carregamento seja sempre o pessoal, a menos que uma shared ID esteja ativa
                 if (!currentBudgetId) {
                     currentBudgetType = 'personal';
                 }
@@ -508,8 +570,6 @@
             } else {
                 console.log('Nenhum usuário, tentando autenticar...');
                 try {
-                    // Removido initialAuthToken pois não é relevante para o Firebase Hosting padrão.
-                    // Autenticação anônima será usada por padrão, ou você pode adicionar outros métodos de login.
                     await signInAnonymously(auth);
                 } catch (e) {
                     showMessage(`Erro na autenticação: ${e.message}`, 'error');
@@ -533,8 +593,9 @@
                 return;
             }
 
-            if (!initialBudget[item]) {
-                showMessage(`O item "${item}" não foi encontrado no seu orçamento.`, 'error');
+            // Garante que o item exista no orçamento e seja do tipo 'expense'
+            if (!initialBudget[item] || initialBudget[item].type === 'income') {
+                showMessage(`O item "${item}" não foi encontrado como uma categoria de gasto no seu orçamento.`, 'error');
                 return;
             }
 
@@ -563,6 +624,53 @@
             itemInput.value = '';
             amountInput.value = '';
         });
+
+        // Lógica para registrar uma RECEITA (NOVA FUNÇÃO)
+        registerIncomeBtn.addEventListener('click', async () => {
+            const itemName = incomeItemNameInput.value.trim().toUpperCase();
+            const amount = parseFloat(incomeAmountInput.value);
+
+            if (!itemName || isNaN(amount) || amount <= 0) {
+                showMessage('Por favor, preencha o nome e um valor válido para a receita.', 'error');
+                return;
+            }
+
+            if (!userId) {
+                showMessage('Nenhum usuário autenticado. Por favor, aguarde a autenticação.', 'error');
+                return;
+            }
+
+            // Adicionar a receita ao saldo total
+            totalBalance += amount;
+
+            // Se a categoria de receita já existir, adiciona o valor a ela.
+            // Se não existir, cria. Usaremos a categoria "SALÁRIOS" como padrão para todas as receitas.
+            // Você pode criar um novo item se preferir detalhar cada receita.
+            if (!initialBudget[itemName]) { // Se for um novo tipo de receita não listado inicialmente
+                 initialBudget[itemName] = { initialValue: amount, balance: amount, type: 'income' };
+            } else if (initialBudget[itemName].type === 'income') { // Se já existir e for do tipo receita
+                initialBudget[itemName].initialValue += amount;
+                initialBudget[itemName].balance += amount;
+            } else { // Se existir mas for do tipo despesa, trate como um novo item
+                showMessage(`A categoria "${itemName}" já existe como despesa. Adicionando como nova receita.`, 'info');
+                initialBudget[`${itemName}_RECEITA`] = { initialValue: amount, balance: amount, type: 'income' };
+            }
+
+
+            try {
+                // Salva as alterações no Firestore
+                await updateBudgetInFirestore();
+
+                showMessage(`Receita de ${formatCurrency(amount)} em "${itemName}" registrada. Saldo Total: ${formatCurrency(totalBalance)}.`, 'success');
+                incomeItemNameInput.value = '';
+                incomeAmountInput.value = '';
+
+            } catch (error) {
+                console.error('Erro ao registrar receita:', error);
+                showMessage('Erro ao registrar receita. Verifique o console para detalhes.', 'error');
+            }
+        });
+
 
         // Funções para Orçamento Compartilhado
         createSharedBudgetButton.addEventListener('click', async () => {
