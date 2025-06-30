@@ -64,6 +64,7 @@
             flex-direction: column;
             justify-content: space-between;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            position: relative; /* Adicionado para posicionamento do botão */
         }
         .budget-item strong {
             font-size: 1.1rem;
@@ -86,6 +87,30 @@
             color: #dc2626; /* red-600 */
             font-weight: bold;
         }
+        .budget-item .edit-button, .budget-item .delete-button { /* Estilos para os botões de ação do item */
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background-color: #60a5fa; /* blue-400 */
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .budget-item .delete-button {
+            right: 55px; /* Posição para o botão de apagar */
+            background-color: #ef4444; /* red-500 */
+        }
+        .budget-item .edit-button:hover {
+            background-color: #3b82f6; /* blue-500 */
+        }
+        .budget-item .delete-button:hover {
+            background-color: #dc2626; /* red-600 */
+        }
+
         .total-balance-card {
             background-color: #e0f2f7; /* light blue */
             border: 2px solid #0369a1; /* dark blue */
@@ -192,6 +217,70 @@
             min-width: 150px;
         }
 
+        /* Modal Styles */
+        .modal {
+            display: none; /* Hidden by default */
+            position: fixed; /* Stay in place */
+            z-index: 1000; /* Sit on top */
+            left: 0;
+            top: 0;
+            width: 100%; /* Full width */
+            height: 100%; /* Full height */
+            overflow: auto; /* Enable scroll if needed */
+            background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 25px 30px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            width: 90%;
+            max-width: 500px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .modal-content h3 {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .modal-content .input-group input {
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .modal-buttons .action-button {
+            padding: 10px 20px;
+            font-size: 1rem;
+            box-shadow: none;
+        }
+        .modal-buttons .cancel-button {
+            background-color: #6b7280; /* gray-500 */
+            background-image: none; /* Remove gradient */
+        }
+        .modal-buttons .cancel-button:hover {
+            background-color: #4b5563; /* gray-700 */
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .modal-buttons .cancel-button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .container {
@@ -219,6 +308,12 @@
                 font-size: 1rem;
                 padding: 10px 15px;
             }
+            .modal-content {
+                padding: 20px;
+            }
+            .modal-content h3 {
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
@@ -237,7 +332,7 @@
 
         <h2 class="section-title">Itens do Orçamento</h2>
         <div id="budgetItems" class="budget-grid">
-            </div>
+        </div>
 
         <h2 class="section-title">Registrar Gasto</h2>
         <div class="input-section">
@@ -281,6 +376,23 @@
         <div id="messageBox" class="message-box"></div>
     </div>
 
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <h3>Editar Item do Orçamento</h3>
+            <div class="input-group">
+                <label for="editItemName">Nome do Item:</label>
+                <input type="text" id="editItemName" readonly> </div>
+            <div class="input-group">
+                <label for="editItemInitialValue">Valor Inicial:</label>
+                <input type="number" id="editItemInitialValue" step="0.01">
+            </div>
+            <div class="modal-buttons">
+                <button id="saveEditButton" class="action-button">Salvar Alterações</button>
+                <button id="cancelEditButton" class="action-button cancel-button">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
         // Importa as funções necessárias do Firebase SDK
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -314,6 +426,7 @@
         // Variáveis de estado para gerenciamento de orçamentos
         let currentBudgetType = 'personal'; // 'personal' ou 'shared'
         let currentBudgetId = null; // Para orçamentos compartilhados, armazena o ID
+        let editingItemKey = null; // Armazena a chave do item sendo editado
 
         // Elementos do DOM
         const budgetItemsContainer = document.getElementById('budgetItems');
@@ -334,6 +447,14 @@
         const createSharedBudgetButton = document.getElementById('createSharedBudgetButton');
         const joinSharedBudgetButton = document.getElementById('joinSharedBudgetButton');
         const switchToPersonalButton = document.getElementById('switchToPersonalButton');
+
+        // ELEMENTOS DO MODAL DE EDIÇÃO
+        const editModal = document.getElementById('editModal');
+        const editItemNameInput = document.getElementById('editItemName');
+        const editItemInitialValueInput = document.getElementById('editItemInitialValue');
+        const saveEditButton = document.getElementById('saveEditButton');
+        const cancelEditButton = document.getElementById('cancelEditButton');
+
 
         // Função para exibir mensagens ao usuário
         function showMessage(message, type = 'info') {
@@ -367,6 +488,7 @@
                 const itemData = initialBudget[itemKey];
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'budget-item';
+                itemDiv.dataset.itemKey = itemKey; // Armazena a chave do item no dataset
 
                 let balanceClass = 'current-balance'; // Padrão para saldos normais
                 let itemTypeLabel = ''; // Rótulo para indicar se é Receita ou Despesa
@@ -387,6 +509,8 @@
                     <strong>${itemKey} (${itemTypeLabel})</strong>
                     <span>Inicial: <span class="initial-value">${formatCurrency(itemData.initialValue)}</span></span>
                     <span>Saldo: <span class="${balanceClass}">${formatCurrency(itemData.balance)}</span></span>
+                    <button class="edit-button" data-item-key="${itemKey}"✏️</button>
+                    <button class="delete-button" data-item-key="${itemKey}">🗑️</button>
                 `;
                 budgetItemsContainer.appendChild(itemDiv);
             }
@@ -483,7 +607,7 @@
                                 initialBudget[item].initialValue = defaultTotalBalance;
                             }
                         }
-                        
+                       
                         // Garante que qualquer item que venha do Firestore tenha um 'type' padrão 'expense' se não definido
                         for (const itemKey in initialBudget) {
                             if (initialBudget[itemKey].type === undefined) {
@@ -644,15 +768,16 @@
             totalBalance += amount;
 
             // Se a categoria de receita já existir, adiciona o valor a ela.
-            // Se não existir, cria. Usaremos a categoria "SALÁRIOS" como padrão para todas as receitas.
-            // Você pode criar um novo item se preferir detalhar cada receita.
-            if (!initialBudget[itemName]) { // Se for um novo tipo de receita não listado inicialmente
+            // Se não existir, cria.
+            if (!initialBudget[itemName]) {
                  initialBudget[itemName] = { initialValue: amount, balance: amount, type: 'income' };
-            } else if (initialBudget[itemName].type === 'income') { // Se já existir e for do tipo receita
+            } else if (initialBudget[itemName].type === 'income') {
                 initialBudget[itemName].initialValue += amount;
                 initialBudget[itemName].balance += amount;
-            } else { // Se existir mas for do tipo despesa, trate como um novo item
+            } else {
+                // Se existir mas for do tipo despesa, trate como um novo item
                 showMessage(`A categoria "${itemName}" já existe como despesa. Adicionando como nova receita.`, 'info');
+                // Adicione um sufixo para evitar conflito de nome com despesa existente
                 initialBudget[`${itemName}_RECEITA`] = { initialValue: amount, balance: amount, type: 'income' };
             }
 
@@ -707,22 +832,133 @@
                 showMessage('Por favor, aguarde a autenticação do usuário.', 'error');
                 return;
             }
-            currentBudgetType = 'personal';
-            currentBudgetId = null; // Limpa o ID do orçamento compartilhado
-            await loadBudget(); // Carrega o orçamento pessoal
-            showMessage('Voltando para o seu orçamento pessoal.', 'info');
+            currentBudgetId = null; // Zera o ID compartilhado
+            currentBudgetType = 'personal'; // Volta para o tipo pessoal
             sharedBudgetIdInput.value = ''; // Limpa o campo do ID compartilhado
+            await loadBudget(); // Recarrega o orçamento pessoal
+            showMessage('Voltando para o seu Orçamento Pessoal.', 'info');
         });
 
-        // Limpeza quando a página é descarregada
-        window.addEventListener('beforeunload', () => {
-            if (authListenerUnsubscribe) {
-                authListenerUnsubscribe();
-            }
-            if (budgetSnapshotUnsubscribe) {
-                budgetSnapshotUnsubscribe();
+
+        // --- LÓGICA DE EDIÇÃO E EXCLUSÃO DE ITENS ---
+
+        // Listener para os botões de Editar e Excluir nos itens do orçamento
+        budgetItemsContainer.addEventListener('click', (event) => {
+            const itemKey = event.target.dataset.itemKey;
+            if (!itemKey) return; // Se não tiver a chave do item, não faz nada
+
+            if (event.target.classList.contains('edit-button')) {
+                openEditModal(itemKey);
+            } else if (event.target.classList.contains('delete-button')) {
+                deleteBudgetItem(itemKey);
             }
         });
+
+        // Abre o modal de edição
+        function openEditModal(itemKey) {
+            editingItemKey = itemKey;
+            const itemData = initialBudget[itemKey];
+
+            if (itemData) {
+                editItemNameInput.value = itemKey;
+                editItemInitialValueInput.value = itemData.initialValue;
+                editModal.style.display = 'flex'; // Exibe o modal (usando flex para centralizar)
+            } else {
+                showMessage('Item não encontrado para edição.', 'error');
+            }
+        }
+
+        // Fecha o modal de edição
+        cancelEditButton.addEventListener('click', () => {
+            editModal.style.display = 'none';
+            editingItemKey = null;
+        });
+
+        // Salva as alterações do modal de edição
+        saveEditButton.addEventListener('click', async () => {
+            if (!editingItemKey) return;
+
+            const newInitialValue = parseFloat(editItemInitialValueInput.value);
+
+            if (isNaN(newInitialValue) || newInitialValue < 0) {
+                showMessage('Por favor, insira um valor inicial válido para o item.', 'error');
+                return;
+            }
+
+            const itemData = initialBudget[editingItemKey];
+            if (!itemData) {
+                showMessage('Erro: Item não encontrado para atualização.', 'error');
+                return;
+            }
+
+            // Calcula a diferença no valor inicial para ajustar o saldo total
+            const oldInitialValue = itemData.initialValue;
+            const difference = newInitialValue - oldInitialValue;
+
+            // Atualiza o saldo do item proporcionalmente à mudança no valor inicial
+            // Se o tipo for despesa, ajustamos o saldo. Se for receita, o saldo também representa o total.
+            // Para simplicidade, vamos ajustar o saldo na mesma proporção da mudança no valor inicial.
+            // Se o saldo for maior que o novo valor inicial, limitamos o saldo ao novo valor inicial
+            // Isso evita que despesas fiquem com saldo maior que o inicial, o que seria estranho
+            let newBalance = itemData.balance + difference;
+
+            // Garante que o saldo não exceda o novo valor inicial para despesas
+            if (itemData.type === 'expense' && newBalance > newInitialValue) {
+                newBalance = newInitialValue;
+            }
+             // Para receitas, o balance e o initialValue devem ser o mesmo se você só está alterando o inicial
+            if (itemData.type === 'income') {
+                newBalance = newInitialValue;
+            }
+
+
+            // Atualiza o estado local
+            itemData.initialValue = newInitialValue;
+            itemData.balance = newBalance;
+            totalBalance += difference; // Atualiza o saldo total com a diferença
+
+            try {
+                await updateBudgetInFirestore();
+                showMessage(`Item "${editingItemKey}" atualizado com sucesso!`, 'success');
+                editModal.style.display = 'none';
+                editingItemKey = null;
+            } catch (error) {
+                console.error('Erro ao salvar alterações do item:', error);
+                showMessage('Erro ao salvar alterações do item. Verifique o console.', 'error');
+            }
+        });
+
+        // Função para deletar um item do orçamento
+        async function deleteBudgetItem(itemKey) {
+            if (!confirm(`Tem certeza que deseja apagar o item "${itemKey}"?`)) {
+                return;
+            }
+
+            const itemData = initialBudget[itemKey];
+            if (!itemData) {
+                showMessage('Erro: Item não encontrado para exclusão.', 'error');
+                return;
+            }
+
+            // Remove o valor do item do saldo total antes de deletá-lo
+            // Se for uma despesa, subtrai o saldo. Se for receita, subtrai o valor inicial (que é o saldo)
+            if (itemData.type === 'expense') {
+                totalBalance += itemData.balance; // Adiciona o que sobrou da despesa de volta ao total
+            } else if (itemData.type === 'income') {
+                totalBalance -= itemData.initialValue; // Subtrai o valor da receita do total
+            }
+
+            delete initialBudget[itemKey]; // Remove o item do objeto local
+
+            try {
+                await updateBudgetInFirestore();
+                showMessage(`Item "${itemKey}" apagado com sucesso.`, 'success');
+            } catch (error) {
+                console.error('Erro ao apagar item:', error);
+                showMessage('Erro ao apagar item. Verifique o console.', 'error');
+            }
+        }
+
     </script>
 </body>
 </html>
